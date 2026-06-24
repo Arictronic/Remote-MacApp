@@ -1,0 +1,26 @@
+# Python / server
+__pycache__/
+*.pyc
+*.pyo
+*.log
+
+# Windows server local environment
+server/.venv/
+server/.env
+
+# Local virtual environments
+.venv/
+
+# macOS
+.DS_Store
+
+# Mac agent build artifacts from source tree
+mac_agent/RemoteMacAgent
+mac_agent/dist_mac/
+dist_mac/
+
+# Keep bundled ready-to-run Mac package
+!RemouteMacApp/
+!RemouteMacApp/RemoteMacAgent
+!RemouteMacApp/config.json
+!RemouteMacApp/start_agent.command

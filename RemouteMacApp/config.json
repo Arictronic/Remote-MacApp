@@ -1,0 +1,10 @@
+{
+  "server": "ws://78.139.86.217:8000/ws/mac",
+  "token": «katyaMacDesktopRem»,
+  "fps": 20,
+  "quality": 0.8,
+  "max_width": 1280,
+  "receive_dir": "Desktop",
+  "skip_unchanged_frames": true,
+  "send_unchanged_every_sec": 1.0
+}

@@ -1,0 +1,743 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+  <title>Remote Mac Viewer</title>
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      background: #101114;
+      color: #f2f2f2;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      overflow: hidden;
+      height: 100%;
+    }
+
+    #topbar {
+      min-height: 48px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      align-items: center;
+      padding: 7px 10px;
+      box-sizing: border-box;
+      background: #191b20;
+      border-bottom: 1px solid #2a2d35;
+    }
+
+    #token {
+      width: 155px;
+      height: 30px;
+      border: 1px solid #343844;
+      background: #0d0e11;
+      color: #fff;
+      padding: 0 8px;
+      border-radius: 6px;
+      outline: none;
+    }
+
+    button {
+      height: 30px;
+      border: 1px solid #3c4352;
+      background: #252a34;
+      color: #fff;
+      border-radius: 6px;
+      padding: 0 9px;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+
+    button:active {
+      transform: translateY(1px);
+    }
+
+    .danger {
+      background: #4a2424;
+      border-color: #6a3636;
+    }
+
+    #status {
+      font-size: 12px;
+      opacity: .9;
+      white-space: nowrap;
+      margin-left: 4px;
+    }
+
+    #stage {
+      width: 100vw;
+      height: calc(100vh - 48px);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      touch-action: none;
+      user-select: none;
+      overflow: hidden;
+    }
+
+    #screen {
+      max-width: 100%;
+      max-height: 100%;
+      object-fit: contain;
+      image-rendering: auto;
+      background: #000;
+      user-select: none;
+      -webkit-user-drag: none;
+    }
+
+    #hiddenInput,
+    #fileInput {
+      position: fixed;
+      left: -1000px;
+      top: -1000px;
+      width: 1px;
+      height: 1px;
+      opacity: 0;
+    }
+
+    #stage.dragover {
+      outline: 3px dashed #6f95ff;
+      outline-offset: -12px;
+      background: #141927;
+    }
+
+    @media (max-width: 760px) {
+      #topbar {
+        padding: 5px;
+        gap: 4px;
+      }
+
+      #token {
+        width: 105px;
+      }
+
+      button {
+        padding: 0 6px;
+        font-size: 12px;
+      }
+
+      #status {
+        width: 100%;
+        font-size: 11px;
+      }
+
+      #stage {
+        height: calc(100vh - 86px);
+      }
+    }
+  </style>
+</head>
+<body>
+  <div id="topbar">
+    <input id="token" placeholder="token">
+    <button id="connect">Connect</button>
+    <button id="reconnect">Reconnect</button>
+    <button id="ctrlAsCmd">Ctrl→Cmd ON</button>
+    <button id="keyboard">Keyboard</button>
+    <button id="enter">Enter</button>
+    <button id="backspace">⌫</button>
+    <button id="escape">Esc</button>
+    <button id="cmdtab">Cmd+Tab</button>
+    <button id="cmdc">Cmd+C</button>
+    <button id="cmdv">Cmd+V</button>
+    <button id="cmdq" class="danger">Cmd+Q</button>
+    <button id="copyRemote">Copy Mac→PC</button>
+    <button id="pasteLocal">Paste PC→Mac</button>
+    <button id="pickFile">Send file</button>
+    <input id="fileInput" type="file" multiple>
+    <span id="status">offline</span>
+  </div>
+
+  <div id="stage">
+    <img id="screen" alt="screen">
+  </div>
+
+  <input id="hiddenInput" autocomplete="off" autocapitalize="off" spellcheck="false">
+
+<script>
+(() => {
+  const tokenInput = document.getElementById("token");
+  const connectBtn = document.getElementById("connect");
+  const reconnectBtn = document.getElementById("reconnect");
+  const ctrlAsCmdBtn = document.getElementById("ctrlAsCmd");
+  const keyboardBtn = document.getElementById("keyboard");
+  const enterBtn = document.getElementById("enter");
+  const backspaceBtn = document.getElementById("backspace");
+  const escapeBtn = document.getElementById("escape");
+  const cmdtabBtn = document.getElementById("cmdtab");
+  const cmdcBtn = document.getElementById("cmdc");
+  const cmdvBtn = document.getElementById("cmdv");
+  const cmdqBtn = document.getElementById("cmdq");
+  const copyRemoteBtn = document.getElementById("copyRemote");
+  const pasteLocalBtn = document.getElementById("pasteLocal");
+  const pickFileBtn = document.getElementById("pickFile");
+  const fileInput = document.getElementById("fileInput");
+  const statusEl = document.getElementById("status");
+  const img = document.getElementById("screen");
+  const stage = document.getElementById("stage");
+  const hiddenInput = document.getElementById("hiddenInput");
+
+  tokenInput.value = "";
+
+  let ctrlAsCmd = (localStorage.getItem("rma_ctrl_as_cmd") || "1") !== "0";
+
+  function refreshCtrlAsCmdButton() {
+    ctrlAsCmdBtn.textContent = ctrlAsCmd ? "Ctrl→Cmd ON" : "Ctrl→Cmd OFF";
+  }
+
+  refreshCtrlAsCmdButton();
+
+  let ws = null;
+  let lastUrl = null;
+  let frames = 0;
+  let lastFpsTime = performance.now();
+  let lastMoveTime = 0;
+  let lastTouchStart = 0;
+  let suppressMouseUntil = 0;
+  let meta = null;
+  let macConnected = false;
+
+  function setStatus(text) {
+    statusEl.textContent = text;
+  }
+
+  function wsURL() {
+    const proto = location.protocol === "https:" ? "wss:" : "ws:";
+    const token = encodeURIComponent(tokenInput.value.trim());
+    return `${proto}//${location.host}/ws/viewer?token=${token}`;
+  }
+
+  function send(obj) {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return false;
+    ws.send(JSON.stringify(obj));
+    return true;
+  }
+
+  function sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  function fileId(file) {
+    return `${Date.now()}-${Math.random().toString(16).slice(2)}-${file.name}`;
+  }
+
+  function arrayBufferToBase64(buffer) {
+    const bytes = new Uint8Array(buffer);
+    let binary = "";
+    const blockSize = 0x8000;
+
+    for (let i = 0; i < bytes.length; i += blockSize) {
+      const chunk = bytes.subarray(i, i + blockSize);
+      binary += String.fromCharCode.apply(null, chunk);
+    }
+
+    return btoa(binary);
+  }
+
+  async function waitSocketDrain() {
+    if (!ws) return;
+
+    while (ws.bufferedAmount > 1024 * 1024) {
+      await sleep(30);
+    }
+  }
+
+  async function copyTextToLocalClipboard(text) {
+    lastRemoteClipboard = text || "";
+
+    if (!lastRemoteClipboard) {
+      setStatus("Mac clipboard is empty");
+      return;
+    }
+
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      try {
+        await navigator.clipboard.writeText(lastRemoteClipboard);
+        setStatus("Mac clipboard copied to PC");
+        return;
+      } catch (_) {
+        setStatus("Mac clipboard received, press Copy Mac→PC");
+        return;
+      }
+    }
+
+    setStatus("Mac clipboard received, browser clipboard API unavailable");
+  }
+
+  async function readLocalClipboardText() {
+    if (navigator.clipboard && navigator.clipboard.readText) {
+      try {
+        return await navigator.clipboard.readText();
+      } catch (_) {
+        return null;
+      }
+    }
+
+    return null;
+  }
+
+  function setMacClipboardAndPaste(text) {
+    if (text === null || text === undefined) {
+      return false;
+    }
+
+    send({ type: "clipboard_set_and_paste", text: String(text) });
+    return true;
+  }
+
+  function prepareNativePasteCapture() {
+    pendingPasteToMac = true;
+    hiddenInput.value = "";
+    hiddenInput.focus();
+
+    if (hiddenInput.select) {
+      hiddenInput.select();
+    }
+
+    setStatus("waiting PC clipboard paste...");
+  }
+
+  async function pasteLocalClipboardToMac() {
+    const text = await readLocalClipboardText();
+
+    if (text === null) {
+      prepareNativePasteCapture();
+      setStatus("Browser denied clipboard read. Press Ctrl+V once more.");
+      return false;
+    }
+
+    setMacClipboardAndPaste(text);
+    setStatus("PC clipboard sent to Mac");
+    return true;
+  }
+
+  function requestMacClipboardCopy() {
+    send({ type: "hotkey", keys: ["cmd", "c"] });
+    setTimeout(() => send({ type: "clipboard_get" }), 160);
+  }
+
+  async function uploadFile(file) {
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      setStatus("connect viewer first");
+      return;
+    }
+
+    if (!macConnected) {
+      setStatus("Mac is not connected");
+      return;
+    }
+
+    const id = fileId(file);
+    const chunkSize = 48 * 1024;
+    const totalChunks = Math.max(1, Math.ceil(file.size / chunkSize));
+
+    send({
+      type: "file_begin",
+      id,
+      name: file.name,
+      size: file.size,
+      mime: file.type || "",
+      lastModified: file.lastModified || 0
+    });
+
+    for (let seq = 0; seq < totalChunks; seq++) {
+      const start = seq * chunkSize;
+      const end = Math.min(file.size, start + chunkSize);
+      const buffer = await file.slice(start, end).arrayBuffer();
+      const data = arrayBufferToBase64(buffer);
+
+      send({
+        type: "file_chunk",
+        id,
+        seq,
+        data
+      });
+
+      if (seq % 5 === 0 || seq + 1 === totalChunks) {
+        const percent = Math.round(((seq + 1) / totalChunks) * 100);
+        setStatus(`sending ${file.name}: ${percent}%`);
+        await waitSocketDrain();
+      }
+    }
+
+    send({
+      type: "file_end",
+      id
+    });
+
+    setStatus(`sent ${file.name} to Mac Desktop`);
+  }
+
+  async function uploadFiles(files) {
+    for (const file of Array.from(files)) {
+      await uploadFile(file);
+    }
+  }
+
+  function connect() {
+    if (ws) {
+      ws.close();
+      ws = null;
+    }
+
+    if (!tokenInput.value.trim()) {
+      setStatus("enter token");
+      tokenInput.focus();
+      return;
+    }
+
+    ws = new WebSocket(wsURL());
+    ws.binaryType = "blob";
+
+    ws.onopen = () => setStatus("online, waiting Mac...");
+    ws.onclose = () => {
+      macConnected = false;
+      setStatus("offline");
+    };
+    ws.onerror = () => setStatus("connection error");
+
+    ws.onmessage = (event) => {
+      if (typeof event.data === "string") {
+        try {
+          const obj = JSON.parse(event.data);
+          if (obj.type === "meta") {
+            meta = obj;
+            if (macConnected) setStatus(`online ${obj.width}x${obj.height}`);
+          } else if (obj.type === "server") {
+            macConnected = !!obj.mac_connected;
+            const warn = obj.default_token ? " default token" : "";
+            setStatus(macConnected ? `online, Mac connected${warn}` : `online, waiting Mac...${warn}`);
+          } else if (obj.type === "clipboard_text") {
+            copyTextToLocalClipboard(obj.text || "");
+          } else if (obj.type === "clipboard_status") {
+            setStatus(obj.ok ? "Mac clipboard updated" : "Mac clipboard update failed");
+          }
+        } catch (_) {}
+        return;
+      }
+
+      if (lastUrl) URL.revokeObjectURL(lastUrl);
+      lastUrl = URL.createObjectURL(event.data);
+      img.src = lastUrl;
+
+      frames++;
+      const now = performance.now();
+      if (now - lastFpsTime >= 1000) {
+        const fps = frames;
+        frames = 0;
+        lastFpsTime = now;
+        const suffix = meta ? ` ${meta.width}x${meta.height}` : "";
+        setStatus(`online ${fps} fps${suffix}`);
+      }
+    };
+  }
+
+  function normFromClient(clientX, clientY) {
+    const r = img.getBoundingClientRect();
+
+    if (r.width <= 0 || r.height <= 0) return null;
+
+    let x = (clientX - r.left) / r.width;
+    let y = (clientY - r.top) / r.height;
+
+    x = Math.max(0, Math.min(1, x));
+    y = Math.max(0, Math.min(1, y));
+
+    return { x, y };
+  }
+
+  function sendMove(clientX, clientY, forced = false) {
+    const now = performance.now();
+
+    if (!forced && now - lastMoveTime < 35) return;
+    lastMoveTime = now;
+
+    const p = normFromClient(clientX, clientY);
+    if (!p) return;
+
+    send({ type: "move", x: p.x, y: p.y });
+  }
+
+  stage.addEventListener("mousemove", (e) => {
+    sendMove(e.clientX, e.clientY);
+  });
+
+  stage.addEventListener("mousedown", (e) => {
+    e.preventDefault();
+    sendMove(e.clientX, e.clientY, true);
+
+    if (e.button === 2) {
+      suppressMouseUntil = performance.now() + 250;
+      send({ type: "rightclick" });
+      return;
+    }
+
+    if (e.detail >= 2) {
+      suppressMouseUntil = performance.now() + 250;
+      send({ type: "doubleclick", button: "left" });
+      return;
+    }
+
+    send({ type: "mousedown", button: "left" });
+  });
+
+  stage.addEventListener("mouseup", (e) => {
+    e.preventDefault();
+
+    if (performance.now() < suppressMouseUntil) {
+      return;
+    }
+
+    sendMove(e.clientX, e.clientY, true);
+    send({ type: "mouseup", button: "left" });
+  });
+
+  stage.addEventListener("click", (e) => e.preventDefault());
+
+  stage.addEventListener("dblclick", (e) => {
+    e.preventDefault();
+    sendMove(e.clientX, e.clientY, true);
+    send({ type: "doubleclick", button: "left" });
+  });
+
+  stage.addEventListener("contextmenu", (e) => e.preventDefault());
+
+  stage.addEventListener("wheel", (e) => {
+    e.preventDefault();
+    send({ type: "scroll", dx: e.deltaX, dy: e.deltaY });
+  }, { passive: false });
+
+  stage.addEventListener("touchstart", (e) => {
+    e.preventDefault();
+    lastTouchStart = performance.now();
+    const t = e.touches[0];
+    if (t) sendMove(t.clientX, t.clientY, true);
+  }, { passive: false });
+
+  stage.addEventListener("touchmove", (e) => {
+    e.preventDefault();
+    const t = e.touches[0];
+    if (t) sendMove(t.clientX, t.clientY);
+  }, { passive: false });
+
+  stage.addEventListener("touchend", (e) => {
+    e.preventDefault();
+    const dt = performance.now() - lastTouchStart;
+    if (dt < 260) send({ type: "click", button: "left" });
+  }, { passive: false });
+
+  window.addEventListener("dragover", (e) => {
+    e.preventDefault();
+    stage.classList.add("dragover");
+  });
+
+  window.addEventListener("dragleave", (e) => {
+    e.preventDefault();
+    if (e.clientX <= 0 || e.clientY <= 0 || e.clientX >= window.innerWidth || e.clientY >= window.innerHeight) {
+      stage.classList.remove("dragover");
+    }
+  });
+
+  window.addEventListener("drop", (e) => {
+    e.preventDefault();
+    stage.classList.remove("dragover");
+    if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      uploadFiles(e.dataTransfer.files);
+    }
+  });
+
+  function keyNameFromEvent(e) {
+    const code = String(e.code || "");
+
+    if (/^Key[A-Z]$/.test(code)) return code.slice(3).toLowerCase();
+    if (/^Digit[0-9]$/.test(code)) return code.slice(5);
+
+    const byCode = {
+      Space: "space",
+      Tab: "Tab",
+      Enter: "Enter",
+      Escape: "Escape",
+      Backspace: "Backspace",
+      Delete: "Delete",
+      Home: "Home",
+      End: "End",
+      PageUp: "PageUp",
+      PageDown: "PageDown",
+      ArrowLeft: "ArrowLeft",
+      ArrowRight: "ArrowRight",
+      ArrowUp: "ArrowUp",
+      ArrowDown: "ArrowDown",
+      Minus: "-",
+      Equal: "=",
+      BracketLeft: "[",
+      BracketRight: "]",
+      Backslash: "\\",
+      Semicolon: ";",
+      Quote: "'",
+      Comma: ",",
+      Period: ".",
+      Slash: "/"
+    };
+
+    if (byCode[code]) return byCode[code];
+
+    return String(e.key || "");
+  }
+
+  function isOnlyModifier(e) {
+    const key = String(e.key || "").toLowerCase();
+    const code = String(e.code || "").toLowerCase();
+
+    return key === "control" ||
+           key === "shift" ||
+           key === "alt" ||
+           key === "meta" ||
+           key === "os" ||
+           code === "controlleft" ||
+           code === "controlright" ||
+           code === "shiftleft" ||
+           code === "shiftright" ||
+           code === "altleft" ||
+           code === "altright" ||
+           code === "metaleft" ||
+           code === "metaright";
+  }
+
+  function shouldConvertCtrlToCmd(e) {
+    if (!ctrlAsCmd || !e.ctrlKey || e.metaKey || e.altKey || isOnlyModifier(e)) return false;
+
+    const key = keyNameFromEvent(e).toLowerCase();
+    const convertible = new Set(["a", "c", "v", "x", "z", "s", "w", "q", "f", "p", "n", "o", "t", "r"]);
+    return convertible.has(key);
+  }
+
+  function handleKeyDown(e) {
+    if (e.target === tokenInput) return;
+    if (isOnlyModifier(e)) return;
+
+    const mainKey = keyNameFromEvent(e);
+
+    if (shouldConvertCtrlToCmd(e)) {
+      const action = mainKey.toLowerCase();
+
+      if (action === "c") {
+        e.preventDefault();
+        e.stopPropagation();
+        requestMacClipboardCopy();
+        return;
+      }
+
+      if (action === "v") {
+        prepareNativePasteCapture();
+
+        // Do not preventDefault here. The browser must fire the native paste event.
+        // This works even when navigator.clipboard.readText() is blocked on http://IP.
+        return;
+      }
+
+      e.preventDefault();
+      e.stopPropagation();
+
+      const keys = ["cmd"];
+      if (e.shiftKey) keys.push("shift");
+      keys.push(action);
+      send({ type: "hotkey", keys });
+      return;
+    }
+
+    e.preventDefault();
+    e.stopPropagation();
+
+    if (e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) {
+      const keys = [];
+      if (e.metaKey) keys.push("cmd");
+      if (e.ctrlKey) keys.push("ctrl");
+      if (e.altKey) keys.push("alt");
+      if (e.shiftKey) keys.push("shift");
+      keys.push(mainKey);
+      send({ type: "hotkey", keys });
+    } else {
+      send({ type: "key", key: mainKey });
+    }
+  }
+
+  window.addEventListener("paste", (e) => {
+    if (e.target === tokenInput) return;
+
+    const text = e.clipboardData ? e.clipboardData.getData("text/plain") : "";
+
+    if (text) {
+      e.preventDefault();
+      e.stopPropagation();
+      pendingPasteToMac = false;
+      lastPasteEventTime = performance.now();
+      setMacClipboardAndPaste(text);
+      hiddenInput.value = "";
+      setStatus("PC clipboard pasted to Mac");
+      return;
+    }
+
+    if (pendingPasteToMac) {
+      e.preventDefault();
+      e.stopPropagation();
+      setStatus("Clipboard paste event had no text");
+    }
+  }, true);
+
+  window.addEventListener("keydown", handleKeyDown, true);
+
+  keyboardBtn.onclick = () => hiddenInput.focus();
+
+  hiddenInput.addEventListener("input", () => {
+    const value = hiddenInput.value;
+    hiddenInput.value = "";
+    for (const ch of value) send({ type: "text", text: ch });
+  });
+
+  hiddenInput.addEventListener("keydown", (e) => {
+    if (e.key === "Backspace" || e.key === "Enter" || e.key === "Escape") {
+      e.preventDefault();
+      send({ type: "key", key: e.key });
+    }
+  });
+
+  hiddenInput.addEventListener("paste", (e) => {
+    const text = e.clipboardData ? e.clipboardData.getData("text/plain") : "";
+
+    if (text) {
+      e.preventDefault();
+      e.stopPropagation();
+      pendingPasteToMac = false;
+      lastPasteEventTime = performance.now();
+      setMacClipboardAndPaste(text);
+      hiddenInput.value = "";
+      setStatus("PC clipboard pasted to Mac");
+    }
+  }, true);
+
+  enterBtn.onclick = () => send({ type: "key", key: "Enter" });
+  backspaceBtn.onclick = () => send({ type: "key", key: "Backspace" });
+  escapeBtn.onclick = () => send({ type: "key", key: "Escape" });
+  cmdtabBtn.onclick = () => send({ type: "hotkey", keys: ["cmd", "Tab"] });
+  cmdcBtn.onclick = () => send({ type: "hotkey", keys: ["cmd", "c"] });
+  cmdvBtn.onclick = () => send({ type: "hotkey", keys: ["cmd", "v"] });
+  cmdqBtn.onclick = () => send({ type: "hotkey", keys: ["cmd", "q"] });
+  ctrlAsCmdBtn.onclick = () => {
+    ctrlAsCmd = !ctrlAsCmd;
+    localStorage.setItem("rma_ctrl_as_cmd", ctrlAsCmd ? "1" : "0");
+    refreshCtrlAsCmdButton();
+  };
+  pickFileBtn.onclick = () => fileInput.click();
+  fileInput.onchange = () => {
+    if (fileInput.files && fileInput.files.length > 0) {
+      uploadFiles(fileInput.files);
+    }
+    fileInput.value = "";
+  };
+  connectBtn.onclick = connect;
+  reconnectBtn.onclick = connect;
+})();
+</script>
+</body>
+</html>

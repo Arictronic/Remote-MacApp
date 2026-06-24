@@ -1,0 +1,10 @@
+{
+  "server": "ws://192.168.248.1:8000/ws/mac",
+  "token": "change-me-123",
+  "fps": 12,
+  "quality": 0.35,
+  "max_width": 1280,
+  "receive_dir": "Desktop",
+  "skip_unchanged_frames": true,
+  "send_unchanged_every_sec": 2.0
+}

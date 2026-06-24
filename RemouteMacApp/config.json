@@ -1,6 +1,6 @@
 {
-  "server": "ws://78.139.86.217:8000/ws/mac",
-  "token": «katyaMacDesktopRem»,
+  "server": "ws://127.0.0.1:8000/ws/mac",
+  "token": «MacDesktopRem»,
   "fps": 20,
   "quality": 0.8,
   "max_width": 1280,

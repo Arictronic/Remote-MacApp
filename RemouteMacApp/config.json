@@ -1,6 +1,6 @@
 {
   "server": "ws://127.0.0.1:8000/ws/mac",
-  "token": «MacDesktopRem»,
+  "token": "MacDesktopRem",
   "fps": 20,
   "quality": 0.8,
   "max_width": 1280,
